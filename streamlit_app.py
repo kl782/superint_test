@@ -16,7 +16,6 @@ import time
 openai_client = OpenAI(api_key = st.secrets["openai_api_key"])
 # Configure AssemblyAI API
 aai.settings.api_key = st.secrets["assemblyai_api_key"]
-transcriber = aai.RealtimeTranscriber()
 
 QUESTIONS = [
 "Is there anything about your existing work processes that you've wished could be transformed/reimagined? Any ideas yet for how?",
