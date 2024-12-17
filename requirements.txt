@@ -7,3 +7,4 @@ websockets
 numpy
 assemblyai
 sounddevice
+openai-whisper
