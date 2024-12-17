@@ -4,3 +4,5 @@ google-cloud-aiplatform
 openai
 soundfile
 pandas
+streamlit-webrtc
+
