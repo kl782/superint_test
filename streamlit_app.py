@@ -91,36 +91,44 @@ def main():
     
     # Start/Stop Recording Buttons
     if st.button("Start Recording"):
-        st.session_state.recording = True
-        st.session_state.raw_answer = ""  # Clear previous answers
-        st.session_state.transcribed_text = ""  # AssemblyAI output container
+    st.session_state.recording = True
+    st.session_state.raw_answer = ""  # Clear previous answers
+    st.session_state.transcribed_text = ""  # AssemblyAI output container
 
     # Define handlers for AssemblyAI
-        def on_data_handler(data):
-            st.session_state.transcribed_text += data.text + " "
-            st.text_area("Live Transcript:", value=st.session_state.transcribed_text, height=150)
+    def on_data_handler(data):
+        st.session_state.transcribed_text += data.text + " "
+        st.text_area("Live Transcript:", value=st.session_state.transcribed_text, height=150)
 
-        def on_error_handler(error):
-            st.error(f"Error during transcription: {error}")
+    def on_error_handler(error):
+        st.error(f"Error during transcription: {error}")
 
-    # Create and start the transcriber
+    # Create the transcriber
     st.session_state.transcriber = aai.RealtimeTranscriber(
         on_data=on_data_handler,
         on_error=on_error_handler,
         sample_rate=16000
     )
 
+    # Connect to the WebSocket
+    st.session_state.transcriber.connect()
     st.info("Recording... Speak now!")
-    st.session_state.stream = st.session_state.transcriber.stream()  # Initialize stream
 
-    if st.button("Stop Recording"):
-        if st.session_state.recording:
-            st.session_state.transcriber.close()
-            st.session_state.recording = False
-            st.session_state.raw_answer = st.session_state.transcribed_text
-            st.success("Recording stopped. Edit the answer if needed.")
-        else:
-            st.warning("Recording is not active.")
+    # Stream audio data
+    # Assuming you have a function `get_audio_chunk()` that captures audio from the microphone
+    while st.session_state.recording:
+        audio_chunk = get_audio_chunk()
+        st.session_state.transcriber.send_audio(audio_chunk)
+
+if st.button("Stop Recording"):
+    if st.session_state.recording:
+        st.session_state.recording = False
+        st.session_state.transcriber.close()
+        st.session_state.raw_answer = st.session_state.transcribed_text
+        st.success("Recording stopped. Edit the answer if needed.")
+    else:
+        st.warning("Recording is not active.")
+
 
 
     # Display live transcription or editable answer
