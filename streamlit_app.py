@@ -1,5 +1,5 @@
 import streamlit as st
-from streamlit_webrtc import WebRtcMode, webrtc_streamer
+from streamlit_webrtc import WebRtcMode, webrtc_streamer, ClientSettings
 from openai import OpenAI
 import requests
 import json
@@ -10,7 +10,7 @@ from assemblyai import Transcriber
 import assemblyai as aai
 import openai
 import time
-import pyaudio
+
 
 # --- API Keys ---
 openai_client = OpenAI(api_key = st.secrets["openai_api_key"])
@@ -39,28 +39,24 @@ FORMAT = pyaudio.paInt16  # Audio format
 CHANNELS = 1  # Mono audio
 RATE = 16000  # Sampling rate for AssemblyAI
 
-def get_audio_chunk():
-    """Capture a chunk of audio from the microphone."""
-    audio = pyaudio.PyAudio()
-    stream = audio.open(format=FORMAT,
-                        channels=CHANNELS,
-                        rate=RATE,
-                        input=True,
-                        frames_per_buffer=CHUNK_SIZE)
-    try:
-        audio_chunk = stream.read(CHUNK_SIZE)
-        return audio_chunk
-    finally:
-        stream.stop_stream()
-        stream.close()
-        audio.terminate()
+async def send_audio_to_assemblyai(audio_frames):
+    async with websockets.connect(
+        'wss://api.assemblyai.com/v2/realtime/ws?sample_rate=16000',
+        extra_headers={'Authorization': aai.settings.api_key}
+    ) as websocket:
+        await websocket.send(json.dumps({"config": {"sample_rate": 16000}}))
+        for frame in audio_frames:
+            await websocket.send(frame)
+            result = await websocket.recv()
+            st.session_state.transcribed_text += json.loads(result)['text'] + ' '
 
-def send_to_openai(text, prompt):
+
+def send_to_openai(text):
     """Call OpenAI API to convert text to markdown."""
     response = openai_client.chat.completions.create(
     model="gpt-4o-mini",
          messages=[
-            {"role": "system", "content": prompt},
+            {"role": "system", "content": "Convert the transcript into clear, clean markdown. Capture work tasks with great detail. If any personal details are captured, generalize them."},
             {"role": "user", "content": text},])
     return response.choices[0].message.content
 
@@ -110,36 +106,32 @@ def main():
     st.info("Press 'Start Recording' to begin speaking, and 'Stop' when done.")
     
     # Start/Stop Recording Buttons
+    if "transcribed_text" not in st.session_state:
+        st.session_state.transcribed_text = ""
+
+    # Start/Stop Recording
     if st.button("Start Recording"):
-        st.session_state.recording = True
-        st.session_state.raw_answer = ""  # Clear previous answers
-        st.session_state.transcribed_text = ""  # AssemblyAI output container
-
-    # Define handlers for AssemblyAI
-        def on_data_handler(data):
-            st.session_state.transcribed_text += data.text + " "
-            st.text_area("Live Transcript:", value=st.session_state.transcribed_text, height=150)
-
-        def on_error_handler(error):
-            st.error(f"Error during transcription: {error}")
-
-    # Create the transcriber
-        st.session_state.transcriber = aai.RealtimeTranscriber(
-            on_data=on_data_handler,
-            on_error=on_error_handler,
-            sample_rate=16000
+        st.session_state.transcribed_text = ""
+        webrtc_ctx = webrtc_streamer(
+            key="speech-to-text",
+            mode=WebRtcMode.SENDONLY,
+            client_settings=ClientSettings(
+                media_stream_constraints={"audio": True, "video": False}
+            ),
+            async_processing=True,
         )
+        if webrtc_ctx.state.playing:
+            st.write("Recording... Speak now!")
+            audio_frames = []
+            while webrtc_ctx.state.playing:
+                if webrtc_ctx.audio_receiver:
+                    audio_frame = webrtc_ctx.audio_receiver.get_frame()
+                    audio_frames.append(audio_frame.to_ndarray().tobytes())
+            asyncio.run(send_audio_to_assemblyai(audio_frames))
+            st.write("Recording stopped.")
 
-    # Connect to AssemblyAI
-        st.session_state.transcriber.connect()
-        st.info("Recording... Speak now!")
-
-    # Stream audio
-        import time
-        while st.session_state.recording:
-            audio_chunk = get_audio_chunk()
-            st.session_state.transcriber.send_audio(audio_chunk)
-            time.sleep(0.1)  # Prevent overwhelming the API
+    # Display transcribed text
+    st.text_area("Transcribed Text", value=st.session_state.transcribed_text, height=200)
 
     if st.button("Stop Recording"):
         if st.session_state.recording:
