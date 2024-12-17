@@ -4,4 +4,3 @@ openai
 requests 
 websockets 
 numpy
-python_version == "3.10"
