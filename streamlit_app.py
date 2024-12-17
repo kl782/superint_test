@@ -6,7 +6,6 @@ import json
 import asyncio
 import websockets
 import base64
-from assemblyai import Transcriber
 import assemblyai as aai
 import openai
 import threading
