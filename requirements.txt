@@ -5,4 +5,6 @@ openai
 soundfile
 pandas
 streamlit-webrtc
-deepspeech
+whisper 
+sounddevice 
+numpy
