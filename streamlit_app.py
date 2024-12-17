@@ -10,7 +10,7 @@ from assemblyai import Transcriber
 import assemblyai as aai
 import openai
 import time
-
+import pyaudio
 
 # --- API Keys ---
 openai_client = OpenAI(api_key = st.secrets["openai_api_key"])
@@ -34,6 +34,26 @@ NAMES = ["ADRIAN", "ALEX", "ALLISON", "ANDREW", "DANNY", "EDWARD", "ELLIS",
 EMAILS = [f"{name.lower()}@besuper.ai" for name in NAMES]
 selected_date = st.date_input("Select a Date")
 
+CHUNK_SIZE = 1024  # Audio chunk size
+FORMAT = pyaudio.paInt16  # Audio format
+CHANNELS = 1  # Mono audio
+RATE = 16000  # Sampling rate for AssemblyAI
+
+def get_audio_chunk():
+    """Capture a chunk of audio from the microphone."""
+    audio = pyaudio.PyAudio()
+    stream = audio.open(format=FORMAT,
+                        channels=CHANNELS,
+                        rate=RATE,
+                        input=True,
+                        frames_per_buffer=CHUNK_SIZE)
+    try:
+        audio_chunk = stream.read(CHUNK_SIZE)
+        return audio_chunk
+    finally:
+        stream.stop_stream()
+        stream.close()
+        audio.terminate()
 
 def send_to_openai(text, prompt):
     """Call OpenAI API to convert text to markdown."""
@@ -96,29 +116,30 @@ def main():
         st.session_state.transcribed_text = ""  # AssemblyAI output container
 
     # Define handlers for AssemblyAI
-    def on_data_handler(data):
-        st.session_state.transcribed_text += data.text + " "
-        st.text_area("Live Transcript:", value=st.session_state.transcribed_text, height=150)
+        def on_data_handler(data):
+            st.session_state.transcribed_text += data.text + " "
+            st.text_area("Live Transcript:", value=st.session_state.transcribed_text, height=150)
 
-    def on_error_handler(error):
-        st.error(f"Error during transcription: {error}")
+        def on_error_handler(error):
+            st.error(f"Error during transcription: {error}")
 
     # Create the transcriber
-    st.session_state.transcriber = aai.RealtimeTranscriber(
-        on_data=on_data_handler,
-        on_error=on_error_handler,
-        sample_rate=16000
-    )
+        st.session_state.transcriber = aai.RealtimeTranscriber(
+            on_data=on_data_handler,
+            on_error=on_error_handler,
+            sample_rate=16000
+        )
 
-    # Connect to the WebSocket
-    st.session_state.transcriber.connect()
-    st.info("Recording... Speak now!")
+    # Connect to AssemblyAI
+        st.session_state.transcriber.connect()
+        st.info("Recording... Speak now!")
 
-    # Stream audio data
-    # Assuming you have a function `get_audio_chunk()` that captures audio from the microphone
-    while st.session_state.recording:
-        audio_chunk = get_audio_chunk()
-        st.session_state.transcriber.send_audio(audio_chunk)
+    # Stream audio
+        import time
+        while st.session_state.recording:
+            audio_chunk = get_audio_chunk()
+            st.session_state.transcriber.send_audio(audio_chunk)
+            time.sleep(0.1)  # Prevent overwhelming the API
 
     if st.button("Stop Recording"):
         if st.session_state.recording:
