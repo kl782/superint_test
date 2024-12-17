@@ -171,14 +171,20 @@ def main():
 
     # --- Transcription Display ---
     if st.session_state.recording:
-        st.text_area("Live Transcript:", value=st.session_state.transcribed_text, height=150, key="live_transcript")
+        st.text_area(
+            "Live Transcript:",
+            value=st.session_state.get("transcribed_text", ""),
+            height=150,
+            key="live_transcript"
+        )
     else:
         st.session_state.raw_answer = st.text_area(
             "Edit Your Answer:",
-            value=st.session_state.transcribed_text if not st.session_state.raw_answer else st.session_state.raw_answer,
+            value=st.session_state.get("transcribed_text", ""),
             height=150,
             key="editable_answer"
         )
+
 
     # --- Markdown Conversion ---
     if st.button("Convert to Markdown", key="convert_markdown"):
