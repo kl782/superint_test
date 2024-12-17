@@ -37,14 +37,11 @@ EMAILS = [f"{name.lower()}@besuper.ai" for name in NAMES]
 
 def send_to_openai(text, prompt):
     """Call OpenAI API to convert text to markdown."""
-response = openai_client.chat.completions.create(
+    response = openai_client.chat.completions.create(
     model="gpt-4o-mini",
          messages=[
             {"role": "system", "content": prompt},
-            {"role": "user", "content": text},
-        ]
-    
-)
+            {"role": "user", "content": text},])
     return response.choices[0].message.content
 
 def send_to_webhook(data):
