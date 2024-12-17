@@ -11,6 +11,9 @@ import openai
 import threading
 import time
 from streamlit_mic_recorder import mic_recorder
+import sounddevice as sd
+import base64
+import queue
 
 
 # --- API Keys ---
@@ -21,32 +24,44 @@ openai_client = OpenAI(api_key = st.secrets["openai_api_key"])
 # Initialize AssemblyAI settings
 aai.settings.api_key = st.secrets["assemblyai_api_key"]
 
+
+
 def start_transcription():
     uri = "wss://api.assemblyai.com/v2/realtime/ws?sample_rate=16000"
+    audio_queue = queue.Queue()
 
-    def on_transcribe():
+    # Audio callback to capture microphone input
+    def audio_callback(indata, frames, time, status):
+        audio_queue.put(indata.copy())  # Copy microphone input into queue
+
+    # WebSocket handler for sending audio and receiving transcription
+    def websocket_handler():
         try:
-            import websocket  # Ensure this works properly if websockets is problematic
-            
-            # Establish WebSocket connection
-            ws = websocket.WebSocket()
-            ws.connect(uri, header={"Authorization": aai.settings.api_key})
+            with websockets.connect(uri, extra_headers={"Authorization": aai.settings.api_key}) as ws:
+                ws.send(json.dumps({"config": {"sample_rate": 16000}}))
+                st.session_state["transcribed_text"] = ""  # Reset transcription
 
-            # Initialize transcription
-            ws.send(json.dumps({"config": {"sample_rate": 16000}}))
-            st.session_state["transcribed_text"] = ""
+                # Start sending audio and receiving transcription
+                while st.session_state.get("recording", False):
+                    if not audio_queue.empty():
+                        # Convert audio to Base64 and send to AssemblyAI
+                        audio_chunk = audio_queue.get()
+                        ws.send(base64.b64encode(audio_chunk).decode("utf-8"))
 
-            while st.session_state.get("recording", False):
-                result = ws.recv()
-                data = json.loads(result)
-                if "text" in data:
-                    # Update the session state only
-                    st.session_state["transcribed_text"] += data["text"] + " "
+                    # Receive the transcription result
+                    result = ws.recv()
+                    data = json.loads(result)
+                    if "text" in data:
+                        st.session_state["transcribed_text"] += data["text"] + " "
         except Exception as e:
-            st.session_state["error"] = f"Error during transcription: {e}"
+            st.error(f"Error during transcription: {e}")
 
-    # Run the transcription logic in a thread
-    threading.Thread(target=on_transcribe, daemon=True).start()
+    # Start the microphone stream and WebSocket in separate threads
+    st.session_state["recording"] = True
+    stream = sd.RawInputStream(samplerate=16000, blocksize=8000, dtype="int16", channels=1, callback=audio_callback)
+    threading.Thread(target=websocket_handler, daemon=True).start()
+    stream.start()
+
 
 
 QUESTIONS = [
