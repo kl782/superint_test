@@ -22,48 +22,32 @@ openai_client = OpenAI(api_key = st.secrets["openai_api_key"])
 aai.settings.api_key = st.secrets["assemblyai_api_key"]
 
 def start_transcription():
-    st.session_state["transcribed_text"] = ""
+    uri = "wss://api.assemblyai.com/v2/realtime/ws?sample_rate=16000"
 
-    # Record audio using the mic_recorder component
-    audio = mic_recorder(start_prompt="Start Recording", stop_prompt="Stop Recording", key="recorder")
+    def on_transcribe():
+        try:
+            import websocket  # Ensure this works properly if websockets is problematic
+            
+            # Establish WebSocket connection
+            ws = websocket.WebSocket()
+            ws.connect(uri, header={"Authorization": aai.settings.api_key})
 
-    if audio:
-        # Display the recorded audio
-        st.audio(audio["bytes"])
+            # Initialize transcription
+            ws.send(json.dumps({"config": {"sample_rate": 16000}}))
+            st.session_state["transcribed_text"] = ""
 
-        # Send the audio to AssemblyAI for transcription
-        response = requests.post(
-            "https://api.assemblyai.com/v2/transcript",
-            headers={
-                "authorization": aai.settings.api_key,
-                "content-type": "application/json"
-            },
-            json={
-                "audio_data": base64.b64encode(audio["bytes"]).decode("utf-8")
-            }
-        )
+            while st.session_state.get("recording", False):
+                result = ws.recv()
+                data = json.loads(result)
+                if "text" in data:
+                    # Update the session state only
+                    st.session_state["transcribed_text"] += data["text"] + " "
+        except Exception as e:
+            st.session_state["error"] = f"Error during transcription: {e}"
 
-        if response.status_code == 200:
-            transcript_id = response.json()["id"]
+    # Run the transcription logic in a thread
+    threading.Thread(target=on_transcribe, daemon=True).start()
 
-            # Polling for the transcription result
-            while True:
-                result = requests.get(
-                    f"https://api.assemblyai.com/v2/transcript/{transcript_id}",
-                    headers={"authorization": aai.settings.api_key}
-                ).json()
-
-                if result["status"] == "completed":
-                    st.session_state["transcribed_text"] = result["text"]
-                    break
-                elif result["status"] == "failed":
-                    st.error("Transcription failed.")
-                    break
-                else:
-                    st.info("Transcribing...")
-                    time.sleep(5)
-        else:
-            st.error("Failed to upload audio for transcription.")
 
 QUESTIONS = [
 "Is there anything about your existing work processes that you've wished could be transformed/reimagined? Any ideas yet for how?",
