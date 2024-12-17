@@ -9,6 +9,7 @@ import base64
 from assemblyai import Transcriber
 import assemblyai as aai
 import openai
+import threading
 import time
 
 
@@ -39,16 +40,25 @@ FORMAT = pyaudio.paInt16  # Audio format
 CHANNELS = 1  # Mono audio
 RATE = 16000  # Sampling rate for AssemblyAI
 
-async def send_audio_to_assemblyai(audio_frames):
-    async with websockets.connect(
-        'wss://api.assemblyai.com/v2/realtime/ws?sample_rate=16000',
-        extra_headers={'Authorization': aai.settings.api_key}
-    ) as websocket:
-        await websocket.send(json.dumps({"config": {"sample_rate": 16000}}))
-        for frame in audio_frames:
-            await websocket.send(frame)
-            result = await websocket.recv()
-            st.session_state.transcribed_text += json.loads(result)['text'] + ' '
+def start_transcription():
+    uri = "wss://api.assemblyai.com/v2/realtime/ws?sample_rate=16000"
+
+    def on_transcribe():
+        try:
+            with websockets.connect(uri, extra_headers={"Authorization": aai.settings.api_key}) as ws:
+                ws.send(json.dumps({"config": {"sample_rate": 16000}}))
+                st.session_state["transcribed_text"] = ""
+                while st.session_state.get("recording", False):
+                    result = ws.recv()
+                    data = json.loads(result)
+                    if "text" in data:
+                        st.session_state["transcribed_text"] += data["text"] + " "
+                        st.text_area("Live Transcript:", st.session_state["transcribed_text"])
+        except Exception as e:
+            st.error(f"Error during transcription: {e}")
+
+    # Start in a new thread
+    threading.Thread(target=on_transcribe).start()
 
 
 def send_to_openai(text):
@@ -71,12 +81,6 @@ def on_data_handler(data):
 def on_error_handler(error):
     st.error(f"Error during transcription: {error}")
 
-# Create the RealtimeTranscriber instance
-transcriber = aai.RealtimeTranscriber(
-    on_data=on_data_handler,
-    on_error=on_error_handler,
-    sample_rate=16000  # Standard sample rate
-)
 
 # Main Logic
 def main():
@@ -110,39 +114,18 @@ def main():
         st.session_state.transcribed_text = ""
 
     # Start/Stop Recording
-    if st.button("Start Recording"):
-        st.session_state.transcribed_text = ""
-        webrtc_ctx = webrtc_streamer(
-            key="speech-to-text",
-            mode=WebRtcMode.SENDONLY,
-            client_settings=ClientSettings(
-                media_stream_constraints={"audio": True, "video": False}
-            ),
-            async_processing=True,
-        )
-        if webrtc_ctx.state.playing:
-            st.write("Recording... Speak now!")
-            audio_frames = []
-            while webrtc_ctx.state.playing:
-                if webrtc_ctx.audio_receiver:
-                    audio_frame = webrtc_ctx.audio_receiver.get_frame()
-                    audio_frames.append(audio_frame.to_ndarray().tobytes())
-            asyncio.run(send_audio_to_assemblyai(audio_frames))
-            st.write("Recording stopped.")
+    if "recording" not in st.session_state:
+        st.session_state["recording"] = False
+    if "transcribed_text" not in st.session_state:
+        st.session_state["transcribed_text"] = ""
 
-    # Display transcribed text
-    st.text_area("Transcribed Text", value=st.session_state.transcribed_text, height=200)
+    if st.button("Start Recording"):
+        st.session_state["recording"] = True
+        start_transcription()
 
     if st.button("Stop Recording"):
-        if st.session_state.recording:
-            st.session_state.recording = False
-            st.session_state.transcriber.close()
-            st.session_state.raw_answer = st.session_state.transcribed_text
-            st.success("Recording stopped. Edit the answer if needed.")
-        else:
-            st.warning("Recording is not active.")
-
-
+        st.session_state["recording"] = False
+        st.success("Recording stopped.").")
 
     # Display live transcription or editable answer
     if st.session_state.recording:
