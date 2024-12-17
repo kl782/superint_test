@@ -4,5 +4,3 @@ openai
 requests 
 websockets 
 numpy
-portaudio
-pyaudio
