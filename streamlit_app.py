@@ -19,7 +19,6 @@ aai.settings.api_key = st.secrets["assemblyai_api_key"]
 transcriber = aai.RealtimeTranscriber()
 
 QUESTIONS = [
-    "What is today's (imagined) date?",
 "Is there anything about your existing work processes that you've wished could be transformed/reimagined? Any ideas yet for how?",
     "Of the tasks you did at work this week using AI, which felt most effective? Which felt least? Explicitly state the tools used for each.",
     "What are two tasks you spent the most time on this week that you didn't use AI to help with? Why didn't you use AI",
@@ -34,6 +33,8 @@ NAMES = ["ADRIAN", "ALEX", "ALLISON", "ANDREW", "DANNY", "EDWARD", "ELLIS",
          "KARLO", "KAZ", "KRISTI", "LACEY", "MINH", "NLW", "NUFAR", "RICH", 
          "RYAN", "SCOTT"]
 EMAILS = [f"{name.lower()}@besuper.ai" for name in NAMES]
+selected_date = st.date_input("Select a Date")
+
 
 def send_to_openai(text, prompt):
     """Call OpenAI API to convert text to markdown."""
@@ -48,6 +49,19 @@ def send_to_webhook(data):
     """Send data to the webhook endpoint."""
     response = requests.post(WEBHOOK_URL, json=data)
     return response.status_code == 200
+
+def on_data_handler(data):
+    st.session_state.transcribed_text += data.text + " "  # Append incoming data
+
+def on_error_handler(error):
+    st.error(f"Error during transcription: {error}")
+
+# Create the RealtimeTranscriber instance
+transcriber = aai.RealtimeTranscriber(
+    on_data=on_data_handler,
+    on_error=on_error_handler,
+    sample_rate=16000  # Standard sample rate
+)
 
 # Main Logic
 def main():
@@ -64,6 +78,8 @@ def main():
         st.session_state.raw_answer = ""
     if "markdown" not in st.session_state:
         st.session_state.markdown = ""
+    if "recording" not in st.session_state:
+        st.session_state.recording = False
 
     current_idx = st.session_state.current_question_idx
     current_question = QUESTIONS[current_idx]
@@ -71,68 +87,95 @@ def main():
     # --- Display Current Question ---
     st.subheader(f"Question {current_idx + 1}: {current_question}")
 
-    # --- Real-Time STT (AssemblyAI) ---
-    st.info("Press 'Record' to start speaking.")
-    transcriber = aai.RealtimeTranscriber()
+    # --- Real-Time STT with AssemblyAI ---
+    st.info("Press 'Start Recording' to begin speaking, and 'Stop' when done.")
+    
+    # Start/Stop Recording Buttons
+    if st.button("Start Recording"):
+        st.session_state.recording = True
+        st.session_state.raw_answer = ""  # Clear previous answers
+        st.session_state.transcribed_text = ""  # AssemblyAI output container
 
-    if st.button("Record"):
-        st.write("Recording... Speak now!")
-        stream = transcriber.start_stream()
-        transcript = ""
+        # Define handlers for AssemblyAI
+        def on_data_handler(data):
+            st.session_state.transcribed_text += data.text + " "
 
-        for msg in stream:
-            if msg.event == "transcript":
-                transcript += " " + msg.text
-                st.session_state.raw_answer = transcript
-                st.text_area("Live Transcript:", value=transcript, height=150)
+        def on_error_handler(error):
+            st.error(f"Error during transcription: {error}")
 
-            # Stop streaming condition
-            if not st.button("Stop"):
-                break
-        stream.close()
+        # Create the transcriber
+        st.session_state.transcriber = aai.RealtimeTranscriber(
+            on_data=on_data_handler,
+            on_error=on_error_handler,
+            sample_rate=16000
+        )
+        st.session_state.transcriber.start()
+        st.info("Recording... Speak now!")
 
-    # Allow User to Edit Answer
-    st.session_state.raw_answer = st.text_area("Edit Your Answer:", value=st.session_state.raw_answer, height=150)
+    if st.button("Stop Recording"):
+        if st.session_state.recording:
+            st.session_state.transcriber.close()
+            st.session_state.recording = False
+            st.session_state.raw_answer = st.session_state.transcribed_text
+            st.success("Recording stopped. Edit the answer if needed.")
+        else:
+            st.warning("Recording is not active.")
+
+    # Display live transcription or editable answer
+    if st.session_state.recording:
+        st.text_area("Live Transcript:", value=st.session_state.transcribed_text, height=150)
+    else:
+        st.session_state.raw_answer = st.text_area("Edit Your Answer:", value=st.session_state.raw_answer, height=150)
 
     # --- Convert to Markdown ---
     if st.button("Convert to Markdown"):
-        with st.spinner("Generating Markdown..."):
-            st.session_state.markdown = send_to_openai(
-                st.session_state.raw_answer,
-                "Convert the following answer into a clean and professional markdown format."
-            )
-        st.success("Markdown Generated!")
-        st.text_area("Markdown:", value=st.session_state.markdown, height=150)
+        if st.session_state.raw_answer.strip():
+            with st.spinner("Generating Markdown..."):
+                st.session_state.markdown = send_to_openai(
+                    st.session_state.raw_answer,
+                    "Convert the following answer into a clean and professional markdown format."
+                )
+            st.success("Markdown Generated!")
+            st.text_area("Markdown:", value=st.session_state.markdown, height=150)
+        else:
+            st.warning("Please provide an answer before converting to markdown.")
 
     # --- Submit Response ---
     if st.button("Submit"):
-        with st.spinner("Submitting your response..."):
-            data = {
-                "name": user_name,
-                "email": user_email,
-                "question": current_question,
-                "raw_answer": st.session_state.raw_answer,
-                "markdown": st.session_state.markdown,
-            }
-            success = send_to_webhook(data)
+        if st.session_state.markdown.strip():
+            with st.spinner("Submitting your response..."):
+                data = {
+                    "name": user_name,
+                    "email": user_email,
+                    "question": current_question,
+                    "raw_answer": st.session_state.raw_answer,
+                    "markdown": st.session_state.markdown,
+                    "date": selected_date.strftime("%Y-%m-%d"),
+                }
+                success = send_to_webhook(data)
 
-            if success:
-                st.success("Response submitted successfully!")
-                # Move to the next question
-                st.session_state.current_question_idx += 1
-                st.session_state.raw_answer = ""
-                st.session_state.markdown = ""
-                if st.session_state.current_question_idx >= len(QUESTIONS):
-                    st.balloons()
-                    st.success("All questions completed. Thank you!")
-                    st.stop()
+                if success:
+                    st.success("Response submitted successfully!")
+                    # Move to the next question
+                    st.session_state.current_question_idx += 1
+                    st.session_state.raw_answer = ""
+                    st.session_state.markdown = ""
+                    st.session_state.transcribed_text = ""
+
+                    if st.session_state.current_question_idx >= len(QUESTIONS):
+                        st.balloons()
+                        st.success("All questions completed. Thank you!")
+                        st.stop()
+                    else:
+                        st.experimental_rerun()
                 else:
-                    st.experimental_rerun()
-            else:
-                st.error("Failed to submit. Please try again.")
+                    st.error("Failed to submit. Please try again.")
+        else:
+            st.warning("Generate Markdown before submitting.")
 
 if __name__ == "__main__":
     main()
+
 
 
 
