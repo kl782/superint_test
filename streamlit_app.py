@@ -127,11 +127,8 @@ def on_error_handler(error):
 def main():
     # --- Login ---
     st.title("AI Use Case Documentation")
-    user_name = st.selectbox("Choose Your Name", NAMES)
-    user_email = st.selectbox("Choose Your Email", EMAILS)
-    st.success(f"Welcome, **{user_name}** ({user_email})!")
 
-    # --- Session State Initialization ---
+    # Ensure session state initialization
     if "current_question_idx" not in st.session_state:
         st.session_state.current_question_idx = 0
     if "raw_answer" not in st.session_state:
@@ -143,36 +140,54 @@ def main():
     if "transcribed_text" not in st.session_state:
         st.session_state.transcribed_text = ""
 
-    current_idx = st.session_state.current_question_idx
-    current_question = QUESTIONS[current_idx]
+    # Select Date Input
+    global selected_date
+    selected_date = st.date_input("Select a Date")
 
-    # --- Display Current Question ---
+    # Display Login Section
+    user_name = st.selectbox("Choose Your Name", NAMES, key="name_select")
+    user_email = st.selectbox("Choose Your Email", EMAILS, key="email_select")
+    st.success(f"Welcome, **{user_name}** ({user_email})!")
+
+    # Retrieve the current question
+    current_idx = st.session_state.current_question_idx
+    if current_idx >= len(QUESTIONS):
+        st.balloons()
+        st.success("All questions completed. Thank you!")
+        st.stop()
+
+    current_question = QUESTIONS[current_idx]
     st.subheader(f"Question {current_idx + 1}: {current_question}")
 
-    # --- Real-Time STT with AssemblyAI ---
+    # --- Recording Section ---
     st.info("Press 'Start Recording' to begin speaking, and 'Stop' when done.")
+    col1, col2 = st.columns(2)
 
-    # Start/Stop Recording Buttons
-    col1, col2 = st.columns(2)  # Arrange buttons in two columns
+    # Start/Stop Buttons
     with col1:
         if st.button("Start Recording"):
-            st.session_state["recording"] = True
+            st.session_state.recording = True
             start_transcription()
 
     with col2:
         if st.button("Stop Recording"):
-            st.session_state["recording"] = False
+            st.session_state.recording = False
             st.success("Recording stopped.")
 
-    # Display live transcript or editable answer
+    # Display live transcription or editable answer
     if st.session_state.recording:
-        st.text_area("Live Transcript:", value=st.session_state.transcribed_text, height=150, key="live_transcript")
+        st.text_area(
+            "Live Transcript:",
+            value=st.session_state.transcribed_text,
+            height=150,
+            key="live_transcript"
+        )
     else:
         st.session_state.raw_answer = st.text_area(
             "Edit Your Answer:",
-            value=st.session_state.transcribed_text if st.session_state.raw_answer == "" else st.session_state.raw_answer,
+            value=st.session_state.transcribed_text if not st.session_state.raw_answer else st.session_state.raw_answer,
             height=150,
-            key="editable_transcript"
+            key="editable_answer"
         )
 
     # --- Convert to Markdown ---
@@ -210,21 +225,8 @@ def main():
                     st.session_state.markdown = ""
                     st.session_state.transcribed_text = ""
 
-                    if st.session_state.current_question_idx >= len(QUESTIONS):
-                        st.balloons()
-                        st.success("All questions completed. Thank you!")
-                        st.stop()
-                    else:
-                        st.experimental_rerun()
+                    st.experimental_rerun()
                 else:
                     st.error("Failed to submit. Please try again.")
         else:
             st.warning("Generate Markdown before submitting.")
-
-
-
-
-
-
-
-
