@@ -6,3 +6,4 @@ requests
 websockets 
 numpy
 assemblyai
+sounddevice
