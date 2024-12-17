@@ -8,3 +8,4 @@ streamlit-webrtc
 whisper 
 sounddevice 
 numpy
+assemblyai
