@@ -1,11 +1,6 @@
-streamlit
-pydub
-google-cloud-aiplatform
-openai
-soundfile
-pandas
-streamlit-webrtc
-whisper 
-sounddevice 
+streamlit 
+streamlit-webrtc 
+openai 
+requests 
+websockets 
 numpy
-assemblyai
