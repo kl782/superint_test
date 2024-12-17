@@ -91,25 +91,27 @@ def main():
     
     # Start/Stop Recording Buttons
     if st.button("Start Recording"):
-        st.session_state.recording = True
-        st.session_state.raw_answer = ""  # Clear previous answers
-        st.session_state.transcribed_text = ""  # AssemblyAI output container
+    st.session_state.recording = True
+    st.session_state.raw_answer = ""  # Clear previous answers
+    st.session_state.transcribed_text = ""  # AssemblyAI output container
 
-        # Define handlers for AssemblyAI
-        def on_data_handler(data):
-            st.session_state.transcribed_text += data.text + " "
+    # Define handlers for AssemblyAI
+    def on_data_handler(data):
+        st.session_state.transcribed_text += data.text + " "
+        st.text_area("Live Transcript:", value=st.session_state.transcribed_text, height=150)
 
-        def on_error_handler(error):
-            st.error(f"Error during transcription: {error}")
+    def on_error_handler(error):
+        st.error(f"Error during transcription: {error}")
 
-        # Create the transcriber
-        st.session_state.transcriber = aai.RealtimeTranscriber(
-            on_data=on_data_handler,
-            on_error=on_error_handler,
-            sample_rate=16000
-        )
-        st.session_state.transcriber.start()
-        st.info("Recording... Speak now!")
+    # Create and start the transcriber
+    st.session_state.transcriber = aai.RealtimeTranscriber(
+        on_data=on_data_handler,
+        on_error=on_error_handler,
+        sample_rate=16000
+    )
+
+    st.info("Recording... Speak now!")
+    st.session_state.stream = st.session_state.transcriber.stream()  # Initialize stream
 
     if st.button("Stop Recording"):
         if st.session_state.recording:
@@ -119,6 +121,7 @@ def main():
             st.success("Recording stopped. Edit the answer if needed.")
         else:
             st.warning("Recording is not active.")
+
 
     # Display live transcription or editable answer
     if st.session_state.recording:
