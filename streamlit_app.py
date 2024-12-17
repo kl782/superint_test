@@ -125,10 +125,18 @@ def on_error_handler(error):
 
 
 def main():
-    # --- Login ---
+    # --- Title and User Inputs ---
     st.title("AI Use Case Documentation")
 
-    # Ensure session state initialization
+    # Date Input
+    selected_date = st.date_input("Select a Date", key="selected_date")
+
+    # User Name and Email Selection
+    user_name = st.selectbox("Choose Your Name", NAMES, key="name_select")
+    user_email = st.selectbox("Choose Your Email", EMAILS, key="email_select")
+    st.success(f"Welcome, **{user_name}** ({user_email})!")
+
+    # --- Initialize Session State ---
     if "current_question_idx" not in st.session_state:
         st.session_state.current_question_idx = 0
     if "raw_answer" not in st.session_state:
@@ -140,48 +148,31 @@ def main():
     if "transcribed_text" not in st.session_state:
         st.session_state.transcribed_text = ""
 
-    # Select Date Input
-    global selected_date
-    selected_date = st.date_input("Select a Date")
-
-    # Display Login Section
-    user_name = st.selectbox("Choose Your Name", NAMES, key="name_select")
-    user_email = st.selectbox("Choose Your Email", EMAILS, key="email_select")
-    st.success(f"Welcome, **{user_name}** ({user_email})!")
-
-    # Retrieve the current question
+    # --- Question Rendering ---
     current_idx = st.session_state.current_question_idx
     if current_idx >= len(QUESTIONS):
-        st.balloons()
         st.success("All questions completed. Thank you!")
+        st.balloons()
         st.stop()
 
     current_question = QUESTIONS[current_idx]
     st.subheader(f"Question {current_idx + 1}: {current_question}")
 
-    # --- Recording Section ---
+    # --- Recording Controls ---
     st.info("Press 'Start Recording' to begin speaking, and 'Stop' when done.")
     col1, col2 = st.columns(2)
-
-    # Start/Stop Buttons
     with col1:
-        if st.button("Start Recording"):
+        if st.button("Start Recording", key="start_recording"):
             st.session_state.recording = True
             start_transcription()
-
     with col2:
-        if st.button("Stop Recording"):
+        if st.button("Stop Recording", key="stop_recording"):
             st.session_state.recording = False
             st.success("Recording stopped.")
 
-    # Display live transcription or editable answer
+    # --- Transcription Display ---
     if st.session_state.recording:
-        st.text_area(
-            "Live Transcript:",
-            value=st.session_state.transcribed_text,
-            height=150,
-            key="live_transcript"
-        )
+        st.text_area("Live Transcript:", value=st.session_state.transcribed_text, height=150, key="live_transcript")
     else:
         st.session_state.raw_answer = st.text_area(
             "Edit Your Answer:",
@@ -190,8 +181,8 @@ def main():
             key="editable_answer"
         )
 
-    # --- Convert to Markdown ---
-    if st.button("Convert to Markdown"):
+    # --- Markdown Conversion ---
+    if st.button("Convert to Markdown", key="convert_markdown"):
         if st.session_state.raw_answer.strip():
             with st.spinner("Generating Markdown..."):
                 st.session_state.markdown = send_to_openai(
@@ -204,7 +195,7 @@ def main():
             st.warning("Please provide an answer before converting to markdown.")
 
     # --- Submit Response ---
-    if st.button("Submit"):
+    if st.button("Submit", key="submit_response"):
         if st.session_state.markdown.strip():
             with st.spinner("Submitting your response..."):
                 data = {
@@ -216,15 +207,12 @@ def main():
                     "date": selected_date.strftime("%Y-%m-%d"),
                 }
                 success = send_to_webhook(data)
-
                 if success:
                     st.success("Response submitted successfully!")
-                    # Move to the next question
                     st.session_state.current_question_idx += 1
                     st.session_state.raw_answer = ""
                     st.session_state.markdown = ""
                     st.session_state.transcribed_text = ""
-
                     st.experimental_rerun()
                 else:
                     st.error("Failed to submit. Please try again.")
