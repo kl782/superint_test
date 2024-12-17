@@ -55,12 +55,12 @@ def start_transcription():
     threading.Thread(target=on_transcribe).start()
 
 
-def send_to_openai(text):
+def send_to_openai(text,prompt):
     """Call OpenAI API to convert text to markdown."""
     response = openai_client.chat.completions.create(
     model="gpt-4o-mini",
          messages=[
-            {"role": "system", "content": "Convert the transcript into clear, clean markdown. Capture work tasks with great detail. If any personal details are captured, generalize them."},
+            {"role": "system", "content": prompt},
             {"role": "user", "content": text},])
     return response.choices[0].message.content
 
@@ -133,7 +133,7 @@ def main():
             with st.spinner("Generating Markdown..."):
                 st.session_state.markdown = send_to_openai(
                     st.session_state.raw_answer,
-                    "Convert the following answer into a clean and professional markdown format."
+                    ""Convert the transcript into clear, clean markdown. Capture work tasks with great detail. If any personal details are captured, generalize them.""
                 )
             st.success("Markdown Generated!")
             st.text_area("Markdown:", value=st.session_state.markdown, height=150)
