@@ -1,5 +1,6 @@
 streamlit 
 streamlit-webrtc 
+streamlit-mic-recorder
 openai 
 requests 
 websockets 
