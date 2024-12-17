@@ -85,22 +85,22 @@ selected_date = st.date_input("Select a Date")
 def start_transcription():
     uri = "wss://api.assemblyai.com/v2/realtime/ws?sample_rate=16000"
 
-    def on_transcribe():
-        try:
-            with websockets.connect(uri, extra_headers={"Authorization": aai.settings.api_key}) as ws:
-                ws.send(json.dumps({"config": {"sample_rate": 16000}}))
-                st.session_state["transcribed_text"] = ""
-                while st.session_state.get("recording", False):
-                    result = ws.recv()
-                    data = json.loads(result)
-                    if "text" in data:
-                        st.session_state["transcribed_text"] += data["text"] + " "
-                        st.text_area("Live Transcript:", st.session_state["transcribed_text"])
-        except Exception as e:
-            st.error(f"Error during transcription: {e}")
+def on_transcribe():
+    try:
+        with websockets.connect(uri, extra_headers={"Authorization": aai.settings.api_key}) as ws:
+            ws.send(json.dumps({"config": {"sample_rate": 16000}}))
+            st.session_state["transcribed_text"] = ""
+            while st.session_state.get("recording", False):
+                result = ws.recv()
+                data = json.loads(result)
+                if "text" in data:
+                    st.session_state["transcribed_text"] += data["text"] + " "
+                    st.text_area("Live Transcript:", st.session_state["transcribed_text"])
+    except Exception as e:
+        st.error(f"Error during transcription: {e}")
 
     # Start in a new thread
-    threading.Thread(target=on_transcribe).start()
+threading.Thread(target=on_transcribe).start()
 
 
 def send_to_openai(text,prompt):
