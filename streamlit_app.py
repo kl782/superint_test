@@ -1,125 +1,128 @@
 import streamlit as st
 from streamlit_webrtc import WebRtcMode, webrtc_streamer
 import openai
+import requests
+import json
+import asyncio
+import websockets
+import base64
 
-# Set OpenAI API key
+# --- API Keys ---
 openai.api_key = st.secrets["openai_api_key"]
+ASSEMBLYAI_API_KEY = st.secrets["assemblyai_api_key"]
+ASSEMBLYAI_WS_URL = "wss://api.assemblyai.com/v2/realtime/ws?sample_rate=16000"
 
-# Names and Emails
+# --- Names and Emails ---
 NAMES = ["ADRIAN", "ALEX", "ALLISON", "ANDREW", "DANNY", "EDWARD", "ELLIS", 
          "HANNAH", "ISAIAH", "JACQUES", "JEN", "JOAQUIM", "JON", "JUAN", 
          "KARLO", "KAZ", "KRISTI", "LACEY", "MINH", "NLW", "NUFAR", "RICH", 
          "RYAN", "SCOTT"]
 EMAILS = [f"{name.lower()}@besuper.ai" for name in NAMES]
 
-# Function to call OpenAI
+# --- OpenAI Function ---
 def send_to_openai(text, prompt_placeholder):
     response = openai.ChatCompletion.create(
         model="gpt-4o",
         messages=[
             {"role": "system", "content": prompt_placeholder},
             {"role": "user", "content": text},
-        ]
+        ],
     )
     return response["choices"][0]["message"]["content"]
 
-# Main App Logic
+# --- Send TSV to Webhook ---
+def send_to_webhook(data, webhook_url):
+    response = requests.post(webhook_url, json={"tsv_data": data})
+    return response.status_code
+
+# --- Real-Time AssemblyAI Streaming ---
+async def assemblyai_stream(ws, audio_receiver, transcript_container):
+    while True:
+        try:
+            audio_frames = audio_receiver.get_frames(timeout=1)
+            for frame in audio_frames:
+                audio_bytes = frame.to_ndarray().tobytes()
+                encoded_audio = base64.b64encode(audio_bytes).decode("utf-8")
+                await ws.send(json.dumps({"audio_data": encoded_audio}))
+
+                # Receive and display transcription
+                result = await ws.recv()
+                result_json = json.loads(result)
+                if "text" in result_json:
+                    transcript_container.text_area(
+                        "Transcript (Real-time):", result_json["text"], height=200
+                    )
+        except Exception:
+            break
+
+# --- Main App Logic ---
 def main():
-    # --- Login ---
     st.title("AI Use Case Documentation")
     user_name = st.selectbox("Choose Your Name", NAMES)
     user_email = st.selectbox("Choose Your Email", EMAILS)
     st.success(f"Welcome, {user_name} ({user_email})!")
 
     st.write("---")
+    st.header("Real-Time Speech-to-Text with Editable Markdown")
 
-    # --- Real-Time Speech-to-Text Section ---
-    st.header("Real-Time Speech-to-Text")
-    st.write("Start speaking, and we'll transcribe your speech in real-time!")
-    
-    # Use provided STT CODE for streaming transcription
-    from pathlib import Path
-    from collections import deque
-    import numpy as np
-    import pydub
-    import time
-    import queue
+    # --- Toggle Questions ---
+    question_option = st.radio("Select Task", ["Summarize as Markdown", "Create a Report Outline"])
+    prompt_placeholder = (
+        "Summarize this into clean and formatted markdown."
+        if question_option == "Summarize as Markdown"
+        else "Create a detailed report outline for the following text."
+    )
 
-    HERE = Path(__file__).parent
-    MODEL_URL = "https://github.com/mozilla/DeepSpeech/releases/download/v0.9.3/deepspeech-0.9.3-models.pbmm"
-    LANG_MODEL_URL = "https://github.com/mozilla/DeepSpeech/releases/download/v0.9.3/deepspeech-0.9.3-models.scorer"
-
-    # Real-time STT
-    from deepspeech import Model
-    model_path = HERE / "models/deepspeech-0.9.3-models.pbmm"
-    lang_model_path = HERE / "models/deepspeech-0.9.3-models.scorer"
-
-    # Download if not present
-    if not model_path.exists() or not lang_model_path.exists():
-        st.warning("Downloading model files. Please wait...")
-        download_file(MODEL_URL, model_path)
-        download_file(LANG_MODEL_URL, lang_model_path)
-
-    # Load DeepSpeech
-    model = Model(str(model_path))
-    model.enableExternalScorer(str(lang_model_path))
-
-    # Start Streaming
-    st.info("Listening... Speak now!")
+    # --- Transcription ---
+    st.subheader("Real-Time Transcription")
+    transcript_container = st.empty()
     webrtc_ctx = webrtc_streamer(
-        key="stt-demo",
+        key="assemblyai-live",
         mode=WebRtcMode.SENDONLY,
         audio_receiver_size=1024,
         rtc_configuration={"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]},
         media_stream_constraints={"audio": True, "video": False},
     )
 
-    transcript = st.text_area("Transcript:", "", height=200)
-
+    # Real-time transcription using AssemblyAI
     if webrtc_ctx.state.playing:
-        stream = model.createStream()
-        while True:
-            try:
-                audio_frames = webrtc_ctx.audio_receiver.get_frames(timeout=1)
-                sound_chunk = pydub.AudioSegment.empty()
-                for audio_frame in audio_frames:
-                    sound = pydub.AudioSegment(
-                        data=audio_frame.to_ndarray().tobytes(),
-                        sample_width=audio_frame.format.bytes,
-                        frame_rate=audio_frame.sample_rate,
-                        channels=1,
-                    )
-                    sound_chunk += sound
+        st.info("Streaming... Start speaking!")
+        asyncio.run(assemblyai_realtime_transcription(transcript_container, webrtc_ctx))
 
-                # Feed into DeepSpeech
-                if len(sound_chunk) > 0:
-                    buffer = np.array(sound_chunk.get_array_of_samples())
-                    stream.feedAudioContent(buffer)
-                    text = stream.intermediateDecode()
-                    transcript = text  # Update transcript
-                    st.text_area("Transcript:", transcript, height=200)
-
-            except queue.Empty:
-                continue
-
-    # --- Send Transcript to OpenAI ---
+    # --- Generate Markdown ---
     if st.button("Generate Markdown"):
         st.info("Sending to OpenAI...")
-        markdown_output = send_to_openai(transcript, "Create markdown from this transcript")
+        transcript = transcript_container.text_area("Transcript:", height=200)
+        markdown_output = send_to_openai(transcript, prompt_placeholder)
+
+        # Editable Markdown Text Area
         st.success("Markdown Output:")
-        st.code(markdown_output)
+        edited_markdown = st.text_area("Edit Markdown:", markdown_output, height=300)
 
-    if st.button("Generate TSV"):
-        st.info("Sending to OpenAI...")
-        tsv_output = send_to_openai(transcript, "Convert this transcript into a .tsv file")
-        tsv_path = "transcript_output.tsv"
+        # Confirmation Step
+        if st.button("Confirm and Generate TSV"):
+            st.info("Generating TSV...")
+            tsv_output = send_to_openai(edited_markdown, "Convert this markdown into TSV format.")
 
-        # Save TSV
-        with open(tsv_path, "w") as f:
-            f.write(tsv_output)
+            st.success("TSV Ready!")
+            st.code(tsv_output)
 
-        st.success("TSV Ready:")
-        st.download_button("Download TSV", data=tsv_output, file_name="transcript_output.tsv")
+            # Send TSV to Webhook
+            webhook_url = st.text_input("Webhook URL:")
+            if st.button("Send TSV to Webhook"):
+                response_code = send_to_webhook(tsv_output, webhook_url)
+                if response_code == 200:
+                    st.success("TSV successfully sent to webhook!")
+                else:
+                    st.error(f"Failed to send TSV. Status code: {response_code}")
+
+# Real-Time Transcription Function
+async def assemblyai_realtime_transcription(transcript_container, webrtc_ctx):
+    async with websockets.connect(
+        ASSEMBLYAI_WS_URL, extra_headers={"Authorization": ASSEMBLYAI_API_KEY}
+    ) as ws:
+        await ws.recv()  # Initial acknowledgment
+        await assemblyai_stream(ws, webrtc_ctx.audio_receiver, transcript_container)
 
 if __name__ == "__main__":
     main()
