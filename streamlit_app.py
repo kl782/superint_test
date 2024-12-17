@@ -1,20 +1,18 @@
 import streamlit as st
-import pandas as pd
-import openai
-import tempfile
-import os
-from pathlib import Path
-
 from streamlit_webrtc import WebRtcMode, webrtc_streamer
+import openai
 
 # Set OpenAI API key
-openai.api_key = st.secrets["openai_api_key"]  
+openai.api_key = st.secrets["openai_api_key"]
 
-# Placeholder Names and Emails
-NAMES = ["ADRIAN", "ALEX", "ALLISON","ANDREW","DANNY","EDWARD","ELLIS","HANNAH","ISAIAH","JACQUES","JEN","JOAQUIM","JON","JUAN","KARLO","KAZ","KRISTI","LACEY","MINH","NLW","NUFAR","RICH","RYAN","SCOTT"]
+# Names and Emails
+NAMES = ["ADRIAN", "ALEX", "ALLISON", "ANDREW", "DANNY", "EDWARD", "ELLIS", 
+         "HANNAH", "ISAIAH", "JACQUES", "JEN", "JOAQUIM", "JON", "JUAN", 
+         "KARLO", "KAZ", "KRISTI", "LACEY", "MINH", "NLW", "NUFAR", "RICH", 
+         "RYAN", "SCOTT"]
 EMAILS = [f"{name.lower()}@besuper.ai" for name in NAMES]
 
-# ----- Function to Send to OpenAI -----
+# Function to call OpenAI
 def send_to_openai(text, prompt_placeholder):
     response = openai.ChatCompletion.create(
         model="gpt-4o",
@@ -25,116 +23,103 @@ def send_to_openai(text, prompt_placeholder):
     )
     return response["choices"][0]["message"]["content"]
 
-# ----- Main App Logic -----
+# Main App Logic
 def main():
-    # ----- LOGIN PAGE -----
+    # --- Login ---
     st.title("AI Use Case Documentation")
-    st.subheader("Log In")
     user_name = st.selectbox("Choose Your Name", NAMES)
     user_email = st.selectbox("Choose Your Email", EMAILS)
     st.success(f"Welcome, {user_name} ({user_email})!")
 
-    # Store Responses
-    session = st.session_state
-    if "responses" not in session:
-        session["responses"] = []
-
     st.write("---")
 
-    # ----- SPEECH-TO-TEXT SECTION -----
+    # --- Real-Time Speech-to-Text Section ---
     st.header("Real-Time Speech-to-Text")
-    transcript = st.text_area("Edit your transcript:", key="transcript_area")
+    st.write("Start speaking, and we'll transcribe your speech in real-time!")
+    
+    # Use provided STT CODE for streaming transcription
+    from pathlib import Path
+    from collections import deque
+    import numpy as np
+    import pydub
+    import time
+    import queue
 
-    # Real-Time Speech-to-Text
+    HERE = Path(__file__).parent
+    MODEL_URL = "https://github.com/mozilla/DeepSpeech/releases/download/v0.9.3/deepspeech-0.9.3-models.pbmm"
+    LANG_MODEL_URL = "https://github.com/mozilla/DeepSpeech/releases/download/v0.9.3/deepspeech-0.9.3-models.scorer"
+
+    # Real-time STT
+    from deepspeech import Model
+    model_path = HERE / "models/deepspeech-0.9.3-models.pbmm"
+    lang_model_path = HERE / "models/deepspeech-0.9.3-models.scorer"
+
+    # Download if not present
+    if not model_path.exists() or not lang_model_path.exists():
+        st.warning("Downloading model files. Please wait...")
+        download_file(MODEL_URL, model_path)
+        download_file(LANG_MODEL_URL, lang_model_path)
+
+    # Load DeepSpeech
+    model = Model(str(model_path))
+    model.enableExternalScorer(str(lang_model_path))
+
+    # Start Streaming
+    st.info("Listening... Speak now!")
     webrtc_ctx = webrtc_streamer(
-        key="speech-to-text",
+        key="stt-demo",
         mode=WebRtcMode.SENDONLY,
         audio_receiver_size=1024,
         rtc_configuration={"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]},
-        media_stream_constraints={"video": False, "audio": True},
+        media_stream_constraints={"audio": True, "video": False},
     )
-    
-    # Update transcript live
-    st.markdown("**Respond, and the text will appear below:**")
-    transcript_box = st.empty()
+
+    transcript = st.text_area("Transcript:", "", height=200)
+
     if webrtc_ctx.state.playing:
-        import numpy as np
-        import pydub
-        from deepspeech import Model
-
-        # Load Model (Modify for actual STT service like Deepgram)
-        model_path = "path/to/deepspeech-model.pbmm"  # Update to your actual path
-        model = Model(model_path)
         stream = model.createStream()
+        while True:
+            try:
+                audio_frames = webrtc_ctx.audio_receiver.get_frames(timeout=1)
+                sound_chunk = pydub.AudioSegment.empty()
+                for audio_frame in audio_frames:
+                    sound = pydub.AudioSegment(
+                        data=audio_frame.to_ndarray().tobytes(),
+                        sample_width=audio_frame.format.bytes,
+                        frame_rate=audio_frame.sample_rate,
+                        channels=1,
+                    )
+                    sound_chunk += sound
 
-        while webrtc_ctx.state.playing:
-            audio_frames = webrtc_ctx.audio_receiver.get_frames(timeout=1)
-            sound_chunk = pydub.AudioSegment.empty()
-            for audio_frame in audio_frames:
-                sound = pydub.AudioSegment(
-                    data=audio_frame.to_ndarray().tobytes(),
-                    sample_width=audio_frame.format.bytes,
-                    frame_rate=audio_frame.sample_rate,
-                    channels=len(audio_frame.layout.channels),
-                )
-                sound_chunk += sound
+                # Feed into DeepSpeech
+                if len(sound_chunk) > 0:
+                    buffer = np.array(sound_chunk.get_array_of_samples())
+                    stream.feedAudioContent(buffer)
+                    text = stream.intermediateDecode()
+                    transcript = text  # Update transcript
+                    st.text_area("Transcript:", transcript, height=200)
 
-            if len(sound_chunk) > 0:
-                buffer = np.array(sound_chunk.set_channels(1).get_array_of_samples())
-                stream.feedAudioContent(buffer)
-                text = stream.intermediateDecode()
-                transcript_box.markdown(f"**Text:** {text}")
-                session["transcript"] = text
+            except queue.Empty:
+                continue
 
-    # Allow user to save or edit
-    st.write("---")
-
-    # ----- OPENAI API CALL -----
+    # --- Send Transcript to OpenAI ---
     if st.button("Generate Markdown"):
-        st.info("Sending to OpenAI for Markdown generation...")
-        markdown_response = send_to_openai(session["transcript"], "Create markdown")
+        st.info("Sending to OpenAI...")
+        markdown_output = send_to_openai(transcript, "Create markdown from this transcript")
         st.success("Markdown Output:")
-        st.code(markdown_response)
-
-        # Save response
-        session["responses"].append({"Markdown": markdown_response})
+        st.code(markdown_output)
 
     if st.button("Generate TSV"):
-        st.info("Sending to OpenAI for TSV generation...")
-        tsv_response = send_to_openai(session["transcript"], "Create a TSV")
-        tsv_path = Path("transcript_output.tsv")
+        st.info("Sending to OpenAI...")
+        tsv_output = send_to_openai(transcript, "Convert this transcript into a .tsv file")
+        tsv_path = "transcript_output.tsv"
 
-        # Save TSV output
+        # Save TSV
         with open(tsv_path, "w") as f:
-            f.write(tsv_response)
-        st.success("TSV Output Saved:")
-        st.download_button("Download TSV", data=tsv_path.read_text(), file_name="output.tsv")
+            f.write(tsv_output)
 
-        # Save response
-        session["responses"].append({"TSV": tsv_response})
-
-    st.write("---")
-
-    # ----- QUESTION NAVIGATION -----
-    st.header("Answer Questions")
-    questions = ["What specific tasks or activities did you use AI for at work this week? Explicitly state the tools and workflows you used.", "Were you using AI to make work faster, cheaper, better or some combination?", "Which AI use felt most effective to you?","What are two tasks or activities that you spent the most time on this week, that you didn't use AI to help with?","Why didn't you use AI to help?","Regardless of whether you're using AI for them, what are your most important work activities or goals right now?"]
-    current_question_idx = session.get("current_question_idx", 0)
-    
-    st.subheader(questions[current_question_idx])
-    answer = st.text_area("Your Answer:")
-    
-    if st.button("Next Question"):
-        if answer:
-            session["responses"].append({questions[current_question_idx]: answer})
-        session["current_question_idx"] = (current_question_idx + 1) % len(questions)
-        st.experimental_rerun()
-
-    st.write("---")
-
-    # Final responses
-    if st.button("Finish"):
-        st.success("Your responses:")
-        st.write(pd.DataFrame(session["responses"]))
+        st.success("TSV Ready:")
+        st.download_button("Download TSV", data=tsv_output, file_name="transcript_output.tsv")
 
 if __name__ == "__main__":
     main()
