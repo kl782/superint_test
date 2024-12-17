@@ -125,7 +125,7 @@ def main():
 
     if st.button("Stop Recording"):
         st.session_state["recording"] = False
-        st.success("Recording stopped.").")
+        st.success("Recording stopped.")
 
     # Display live transcription or editable answer
     if st.session_state.recording:
