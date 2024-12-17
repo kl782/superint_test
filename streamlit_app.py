@@ -202,3 +202,6 @@ def main():
                     st.error("Failed to submit. Please try again.")
         else:
             st.warning("Generate Markdown before submitting.")
+
+if __name__ == "__main__":
+    main()
