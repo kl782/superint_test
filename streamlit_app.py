@@ -1,16 +1,32 @@
 import streamlit as st
 from streamlit_webrtc import WebRtcMode, webrtc_streamer
-import openai
+from openai import OpenAI
 import requests
 import json
 import asyncio
 import websockets
 import base64
+from assemblyai import Transcriber
+import assemblyai as aai
+import openai
+import time
+
 
 # --- API Keys ---
-openai.api_key = st.secrets["openai_api_key"]
-ASSEMBLYAI_API_KEY = st.secrets["assemblyai_api_key"]
-ASSEMBLYAI_WS_URL = "wss://api.assemblyai.com/v2/realtime/ws?sample_rate=16000"
+openai_client = OpenAI(api_key = st.secrets["openai_api_key"])
+# Configure AssemblyAI API
+aai.settings.api_key = st.secrets["assemblyai_api_key"]
+transcriber = aai.RealtimeTranscriber()
+
+QUESTIONS = [
+    "What is today's (imagined) date?",
+"Is there anything about your existing work processes that you've wished could be transformed/reimagined? Any ideas yet for how?",
+    "Of the tasks you did at work this week using AI, which felt most effective? Which felt least? Explicitly state the tools used for each.",
+    "What are two tasks you spent the most time on this week that you didn't use AI to help with? Why didn't you use AI",
+    "What are your most important work activities or goals right now, regardles of whether you used AI?",
+]
+
+WEBHOOK_URL = "https://hooks.zapier.com/hooks/catch/17695527/2sxkro8/"
 
 # --- Names and Emails ---
 NAMES = ["ADRIAN", "ALEX", "ALLISON", "ANDREW", "DANNY", "EDWARD", "ELLIS", 
@@ -19,110 +35,111 @@ NAMES = ["ADRIAN", "ALEX", "ALLISON", "ANDREW", "DANNY", "EDWARD", "ELLIS",
          "RYAN", "SCOTT"]
 EMAILS = [f"{name.lower()}@besuper.ai" for name in NAMES]
 
-# --- OpenAI Function ---
-def send_to_openai(text, prompt_placeholder):
-    response = openai.ChatCompletion.create(
-        model="gpt-4o",
-        messages=[
-            {"role": "system", "content": prompt_placeholder},
+def send_to_openai(text, prompt):
+    """Call OpenAI API to convert text to markdown."""
+response = openai_client.chat.completions.create(
+    model="gpt-4o-mini",
+         messages=[
+            {"role": "system", "content": prompt},
             {"role": "user", "content": text},
-        ],
-    )
-    return response["choices"][0]["message"]["content"]
+        ]
+    
+)
+    return response.choices[0].message.content
 
-# --- Send TSV to Webhook ---
-def send_to_webhook(data, webhook_url):
-    response = requests.post(webhook_url, json={"tsv_data": data})
-    return response.status_code
+def send_to_webhook(data):
+    """Send data to the webhook endpoint."""
+    response = requests.post(WEBHOOK_URL, json=data)
+    return response.status_code == 200
 
-# --- Real-Time AssemblyAI Streaming ---
-async def assemblyai_stream(ws, audio_receiver, transcript_container):
-    while True:
-        try:
-            audio_frames = audio_receiver.get_frames(timeout=1)
-            for frame in audio_frames:
-                audio_bytes = frame.to_ndarray().tobytes()
-                encoded_audio = base64.b64encode(audio_bytes).decode("utf-8")
-                await ws.send(json.dumps({"audio_data": encoded_audio}))
-
-                # Receive and display transcription
-                result = await ws.recv()
-                result_json = json.loads(result)
-                if "text" in result_json:
-                    transcript_container.text_area(
-                        "Transcript (Real-time):", result_json["text"], height=200
-                    )
-        except Exception:
-            break
-
-# --- Main App Logic ---
+# Main Logic
 def main():
+    # --- Login ---
     st.title("AI Use Case Documentation")
     user_name = st.selectbox("Choose Your Name", NAMES)
     user_email = st.selectbox("Choose Your Email", EMAILS)
-    st.success(f"Welcome, {user_name} ({user_email})!")
+    st.success(f"Welcome, **{user_name}** ({user_email})!")
 
-    st.write("---")
-    st.header("Real-Time Speech-to-Text with Editable Markdown")
+    # --- Session State Initialization ---
+    if "current_question_idx" not in st.session_state:
+        st.session_state.current_question_idx = 0
+    if "raw_answer" not in st.session_state:
+        st.session_state.raw_answer = ""
+    if "markdown" not in st.session_state:
+        st.session_state.markdown = ""
 
-    # --- Toggle Questions ---
-    question_option = st.radio("Select Task", ["Summarize as Markdown", "Create a Report Outline"])
-    prompt_placeholder = (
-        "Summarize this into clean and formatted markdown."
-        if question_option == "Summarize as Markdown"
-        else "Create a detailed report outline for the following text."
-    )
+    current_idx = st.session_state.current_question_idx
+    current_question = QUESTIONS[current_idx]
 
-    # --- Transcription ---
-    st.subheader("Real-Time Transcription")
-    transcript_container = st.empty()
-    webrtc_ctx = webrtc_streamer(
-        key="assemblyai-live",
-        mode=WebRtcMode.SENDONLY,
-        audio_receiver_size=1024,
-        rtc_configuration={"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]},
-        media_stream_constraints={"audio": True, "video": False},
-    )
+    # --- Display Current Question ---
+    st.subheader(f"Question {current_idx + 1}: {current_question}")
 
-    # Real-time transcription using AssemblyAI
-    if webrtc_ctx.state.playing:
-        st.info("Streaming... Start speaking!")
-        asyncio.run(assemblyai_realtime_transcription(transcript_container, webrtc_ctx))
+    # --- Real-Time STT (AssemblyAI) ---
+    st.info("Press 'Record' to start speaking.")
+    transcriber = aai.RealtimeTranscriber()
 
-    # --- Generate Markdown ---
-    if st.button("Generate Markdown"):
-        st.info("Sending to OpenAI...")
-        transcript = transcript_container.text_area("Transcript:", height=200)
-        markdown_output = send_to_openai(transcript, prompt_placeholder)
+    if st.button("Record"):
+        st.write("Recording... Speak now!")
+        stream = transcriber.start_stream()
+        transcript = ""
 
-        # Editable Markdown Text Area
-        st.success("Markdown Output:")
-        edited_markdown = st.text_area("Edit Markdown:", markdown_output, height=300)
+        for msg in stream:
+            if msg.event == "transcript":
+                transcript += " " + msg.text
+                st.session_state.raw_answer = transcript
+                st.text_area("Live Transcript:", value=transcript, height=150)
 
-        # Confirmation Step
-        if st.button("Confirm and Generate TSV"):
-            st.info("Generating TSV...")
-            tsv_output = send_to_openai(edited_markdown, "Convert this markdown into TSV format.")
+            # Stop streaming condition
+            if not st.button("Stop"):
+                break
+        stream.close()
 
-            st.success("TSV Ready!")
-            st.code(tsv_output)
+    # Allow User to Edit Answer
+    st.session_state.raw_answer = st.text_area("Edit Your Answer:", value=st.session_state.raw_answer, height=150)
 
-            # Send TSV to Webhook
-            webhook_url = st.text_input("Webhook URL:")
-            if st.button("Send TSV to Webhook"):
-                response_code = send_to_webhook(tsv_output, webhook_url)
-                if response_code == 200:
-                    st.success("TSV successfully sent to webhook!")
+    # --- Convert to Markdown ---
+    if st.button("Convert to Markdown"):
+        with st.spinner("Generating Markdown..."):
+            st.session_state.markdown = send_to_openai(
+                st.session_state.raw_answer,
+                "Convert the following answer into a clean and professional markdown format."
+            )
+        st.success("Markdown Generated!")
+        st.text_area("Markdown:", value=st.session_state.markdown, height=150)
+
+    # --- Submit Response ---
+    if st.button("Submit"):
+        with st.spinner("Submitting your response..."):
+            data = {
+                "name": user_name,
+                "email": user_email,
+                "question": current_question,
+                "raw_answer": st.session_state.raw_answer,
+                "markdown": st.session_state.markdown,
+            }
+            success = send_to_webhook(data)
+
+            if success:
+                st.success("Response submitted successfully!")
+                # Move to the next question
+                st.session_state.current_question_idx += 1
+                st.session_state.raw_answer = ""
+                st.session_state.markdown = ""
+                if st.session_state.current_question_idx >= len(QUESTIONS):
+                    st.balloons()
+                    st.success("All questions completed. Thank you!")
+                    st.stop()
                 else:
-                    st.error(f"Failed to send TSV. Status code: {response_code}")
-
-# Real-Time Transcription Function
-async def assemblyai_realtime_transcription(transcript_container, webrtc_ctx):
-    async with websockets.connect(
-        ASSEMBLYAI_WS_URL, extra_headers={"Authorization": ASSEMBLYAI_API_KEY}
-    ) as ws:
-        await ws.recv()  # Initial acknowledgment
-        await assemblyai_stream(ws, webrtc_ctx.audio_receiver, transcript_container)
+                    st.experimental_rerun()
+            else:
+                st.error("Failed to submit. Please try again.")
 
 if __name__ == "__main__":
     main()
+
+
+
+
+
+
+
