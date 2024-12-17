@@ -35,11 +35,6 @@ NAMES = ["ADRIAN", "ALEX", "ALLISON", "ANDREW", "DANNY", "EDWARD", "ELLIS",
 EMAILS = [f"{name.lower()}@besuper.ai" for name in NAMES]
 selected_date = st.date_input("Select a Date")
 
-CHUNK_SIZE = 1024  # Audio chunk size
-FORMAT = pyaudio.paInt16  # Audio format
-CHANNELS = 1  # Mono audio
-RATE = 16000  # Sampling rate for AssemblyAI
-
 def start_transcription():
     uri = "wss://api.assemblyai.com/v2/realtime/ws?sample_rate=16000"
 
