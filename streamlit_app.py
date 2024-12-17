@@ -91,17 +91,17 @@ def main():
     
     # Start/Stop Recording Buttons
     if st.button("Start Recording"):
-    st.session_state.recording = True
-    st.session_state.raw_answer = ""  # Clear previous answers
-    st.session_state.transcribed_text = ""  # AssemblyAI output container
+        st.session_state.recording = True
+        st.session_state.raw_answer = ""  # Clear previous answers
+        st.session_state.transcribed_text = ""  # AssemblyAI output container
 
     # Define handlers for AssemblyAI
-    def on_data_handler(data):
-        st.session_state.transcribed_text += data.text + " "
-        st.text_area("Live Transcript:", value=st.session_state.transcribed_text, height=150)
+        def on_data_handler(data):
+            st.session_state.transcribed_text += data.text + " "
+            st.text_area("Live Transcript:", value=st.session_state.transcribed_text, height=150)
 
-    def on_error_handler(error):
-        st.error(f"Error during transcription: {error}")
+        def on_error_handler(error):
+            st.error(f"Error during transcription: {error}")
 
     # Create and start the transcriber
     st.session_state.transcriber = aai.RealtimeTranscriber(
