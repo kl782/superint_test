@@ -10,12 +10,60 @@ import assemblyai as aai
 import openai
 import threading
 import time
+from streamlit_mic_recorder import mic_recorder
 
 
 # --- API Keys ---
 openai_client = OpenAI(api_key = st.secrets["openai_api_key"])
 # Configure AssemblyAI API
+
+
+# Initialize AssemblyAI settings
 aai.settings.api_key = st.secrets["assemblyai_api_key"]
+
+def start_transcription():
+    st.session_state["transcribed_text"] = ""
+
+    # Record audio using the mic_recorder component
+    audio = mic_recorder(start_prompt="Start Recording", stop_prompt="Stop Recording", key="recorder")
+
+    if audio:
+        # Display the recorded audio
+        st.audio(audio["bytes"])
+
+        # Send the audio to AssemblyAI for transcription
+        response = requests.post(
+            "https://api.assemblyai.com/v2/transcript",
+            headers={
+                "authorization": aai.settings.api_key,
+                "content-type": "application/json"
+            },
+            json={
+                "audio_data": base64.b64encode(audio["bytes"]).decode("utf-8")
+            }
+        )
+
+        if response.status_code == 200:
+            transcript_id = response.json()["id"]
+
+            # Polling for the transcription result
+            while True:
+                result = requests.get(
+                    f"https://api.assemblyai.com/v2/transcript/{transcript_id}",
+                    headers={"authorization": aai.settings.api_key}
+                ).json()
+
+                if result["status"] == "completed":
+                    st.session_state["transcribed_text"] = result["text"]
+                    break
+                elif result["status"] == "failed":
+                    st.error("Transcription failed.")
+                    break
+                else:
+                    st.info("Transcribing...")
+                    time.sleep(5)
+        else:
+            st.error("Failed to upload audio for transcription.")
 
 QUESTIONS = [
 "Is there anything about your existing work processes that you've wished could be transformed/reimagined? Any ideas yet for how?",
@@ -76,7 +124,6 @@ def on_error_handler(error):
     st.error(f"Error during transcription: {error}")
 
 
-# Main Logic
 def main():
     # --- Login ---
     st.title("AI Use Case Documentation")
@@ -93,6 +140,8 @@ def main():
         st.session_state.markdown = ""
     if "recording" not in st.session_state:
         st.session_state.recording = False
+    if "transcribed_text" not in st.session_state:
+        st.session_state.transcribed_text = ""
 
     current_idx = st.session_state.current_question_idx
     current_question = QUESTIONS[current_idx]
@@ -102,30 +151,29 @@ def main():
 
     # --- Real-Time STT with AssemblyAI ---
     st.info("Press 'Start Recording' to begin speaking, and 'Stop' when done.")
-    
+
     # Start/Stop Recording Buttons
-    if "transcribed_text" not in st.session_state:
-        st.session_state.transcribed_text = ""
+    col1, col2 = st.columns(2)  # Arrange buttons in two columns
+    with col1:
+        if st.button("Start Recording"):
+            st.session_state["recording"] = True
+            start_transcription()
 
-    # Start/Stop Recording
-    if "recording" not in st.session_state:
-        st.session_state["recording"] = False
-    if "transcribed_text" not in st.session_state:
-        st.session_state["transcribed_text"] = ""
+    with col2:
+        if st.button("Stop Recording"):
+            st.session_state["recording"] = False
+            st.success("Recording stopped.")
 
-    if st.button("Start Recording"):
-        st.session_state["recording"] = True
-        start_transcription()
-
-    if st.button("Stop Recording"):
-        st.session_state["recording"] = False
-        st.success("Recording stopped.")
-
-    # Display live transcription or editable answer
+    # Display live transcript or editable answer
     if st.session_state.recording:
-        st.text_area("Live Transcript:", value=st.session_state.transcribed_text, height=150)
+        st.text_area("Live Transcript:", value=st.session_state.transcribed_text, height=150, key="live_transcript")
     else:
-        st.session_state.raw_answer = st.text_area("Edit Your Answer:", value=st.session_state.raw_answer, height=150)
+        st.session_state.raw_answer = st.text_area(
+            "Edit Your Answer:",
+            value=st.session_state.transcribed_text if st.session_state.raw_answer == "" else st.session_state.raw_answer,
+            height=150,
+            key="editable_transcript"
+        )
 
     # --- Convert to Markdown ---
     if st.button("Convert to Markdown"):
@@ -133,10 +181,10 @@ def main():
             with st.spinner("Generating Markdown..."):
                 st.session_state.markdown = send_to_openai(
                     st.session_state.raw_answer,
-                    ""Convert the transcript into clear, clean markdown. Capture work tasks with great detail. If any personal details are captured, generalize them.""
+                    "Convert the transcript into clear, clean markdown. Capture work tasks with great detail. If any personal details are captured, generalize them."
                 )
             st.success("Markdown Generated!")
-            st.text_area("Markdown:", value=st.session_state.markdown, height=150)
+            st.text_area("Markdown:", value=st.session_state.markdown, height=150, key="markdown_output")
         else:
             st.warning("Please provide an answer before converting to markdown.")
 
@@ -172,9 +220,6 @@ def main():
                     st.error("Failed to submit. Please try again.")
         else:
             st.warning("Generate Markdown before submitting.")
-
-if __name__ == "__main__":
-    main()
 
 
 
